@@ -1,0 +1,79 @@
+"""
+Configuration settings for the raspberry pi.
+"""
+
+"""
+System configuration of the device.
+"""
+
+""" Home directory where the software is running. """
+HOME="/home/pi/workspace/Ez-Tracker"
+""" Location of the GPS logs. """
+GPS_LOG = "/home/pi/Desktop/GPS.log"
+GSM_LOG = "/home/pi/Desktop/GSM.log"
+
+
+"""
+Basic information of the mobile.
+"""
+
+""" Mobile ID. """
+EQUIPMENT_ID=21
+""" Name of the equipment. """
+EQUIPMENT_NAME="LM001"
+""" Mobile type. """
+EQUIPMENT_TYPE="truck"
+
+
+""" 
+RPI Pins used for module interface. 
+"""
+
+""" For GPS module. """
+GPS_RX_PIN = 26
+GPS_TX_PIN = 19
+""" For GSM module. """
+GSM_RX_PIN = 6
+GSM_TX_PIN = 13
+""" For ADC module. """
+ADC_CLK_PIN = 4
+ADC_MISO_PIN = 17
+ADC_MOSI_PIN = 27
+ADC_CS_PIN = 22
+
+
+"""
+GSM settings and configuration.
+"""
+
+""" GSM interface used to send data. """
+GSM_INTERFACE="PCC4"
+""" Server URL for the interface. """
+URL_ADDRESS = "http://178.33.212.69/PCC4/PccServlet"
+""" Server port used for the interface (if applicable). """
+TCP_PORT = 18080
+""" Interface username if applicable. """
+USERNAME = "logimine"
+""" Interface password if applicable. """
+PASSWORD = "PCC4"
+
+"""
+GSM access point name(APN) of network provider.
+"""
+
+"""Globe APN"""
+#APN="internet.globe.com.ph"
+"""Smart APN"""
+APN="SMART Gold"
+
+
+"""
+Configuration for truck.
+"""
+
+""" Payload interface. """
+PAYLOAD_INTERFACE=None
+""" ADC index used for the Dump Sensor. """
+DUMP_SENSOR_INDEX=4
+""" Nominal tonnage of the truck. """
+TRUCK_NOMINAL_TONNAGE=100

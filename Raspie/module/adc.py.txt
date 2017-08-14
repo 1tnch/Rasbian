@@ -1,0 +1,88 @@
+import Adafruit_MCP3008
+import time
+import config
+import threading
+
+
+class MCP3008(object):
+    """
+    Class to represent an Adafruit MCP3008 analog to digital converter.
+    For detailed explanation of the device, see MCP3008 'datasheet <https://cdn-shop.adafruit.com/datasheets/MCP3008.pdf>'_.
+
+    :param CLK: Maintaining Minimum Clock Speed, for constraints on clock speed.
+    :param MISO: Serial data input pin is used to load channel configuration data into the device.
+    :param MOSI: Serial data output pin is used to shift out the results of the A/D conversion.
+    :param CS:  Chip select pin is used to initiate communication with the device when pulled low. When pulled high, it
+                will end a conversion and put the device in low-power standby. 
+    """
+    
+    # Voltage value collection of the ADC.
+    volts=None
+    def get_voltages(self):
+        def _volts():
+            return self.volts
+        return _volts
+    
+    
+    def __init__(self, CLK=config.ADC_CLK_PIN,MISO=config.ADC_MISO_PIN,
+                MOSI=config.ADC_MOSI_PIN,CS=config.ADC_CS_PIN):
+        """
+        Initialize and set the default GPIO pin of the CLK, MISO, MOSI, CS.
+        """
+        self.CLK = CLK
+        self.MISO = MISO
+        self.MOSI = MOSI
+        self.CS = CS
+        
+        # Read the ADC continuously as a thread.
+        thread_adc=threading.Thread(target=self.readAdc, args=())
+        thread_adc.start()
+        
+        print("MCP3008 Initialised.")
+        
+        
+    def readAdc(self):
+        """
+        Read the current value of the specified ADC channel (0-7).  The values
+        can range from 0 to 1023 (10-bits).	
+
+        Data can be called through an array ranges from 0-7.
+
+        The maximum values 1023 or 2^10 is equal to the supply voltage of the sensor.
+        
+
+                    3.3 volts depends on the voltage used from the sensor.
+                    volts[i] = (float(values[i]) * 3.3)/float(1023).
+
+                    # ADC Value
+                    # (approx)   Volts
+                    #    0       0.0
+                    #   78       0.2
+                    #  155       0.5
+                    #  233       0.7
+                    #  310       1.0
+                    #  465       1.5
+                    #  775       2.5
+                    # 1023       3.3
+
+        :returns: The equivalent voltage read by adc from sensors.
+        """
+        mcp = Adafruit_MCP3008.MCP3008(clk=self.CLK, miso=self.MISO, mosi=self.MOSI, cs=self.CS) 
+        
+        while True:
+            #read and convert the data to voltage with a range of 0-3.3V.
+            values=[0]*8
+            volts=[0]*8
+            for i in range(8):
+                values[i] = mcp.read_adc(i)
+                volts[i] = round(((float(values[i]) * 3.3)/float(1023)), 3)
+
+            #return the data.
+            self.volts=volts
+            
+            time.sleep(0.1)
+
+#read = MCP3008()
+#while True:
+#    print ('| {0:>15} | {1:>15} | {2:>15} | {3:>15} | {4:>15} | {5:>15} | {6:>15} | {7:>15} |'.format(*read.readAdc()))
+#    time.sleep(1)

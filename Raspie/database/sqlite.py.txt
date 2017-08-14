@@ -1,0 +1,543 @@
+"""
+The `lm_database` module provides functionalities involving databases for 
+the data read from the accelerometer and the gps. 
+
+"""
+
+import sqlite3 as lite
+import time
+import config
+
+NOT_NULL=1
+NULLABLE=0
+NOT_PRIMARY_KEY=0
+PRIMARY_KEY=1
+
+
+#===============================================================================
+# Structure defining STATUS table in the sqlite database.
+# 
+# Format:
+# [cid, name, type, notnull, default_value, is_pk]
+#===============================================================================
+db_status=[
+# Primary key.
+[0, "PK", "INTEGER", NOT_NULL, None, PRIMARY_KEY],
+# Date and time of the status.
+[1,"DATETIME","TIMESTAMP",NULLABLE,None, NOT_PRIMARY_KEY],
+# Mobile ID.
+[2,"EQUIPMENT","STRING",NULLABLE, None, NOT_PRIMARY_KEY],
+# Equipment name.
+[3,"EQUIPMENT_ID","ID",NULLABLE, None, NOT_PRIMARY_KEY],
+# Serial number of the mobile.
+[4,"EQUIPMENT_SER","TEXT",NULLABLE, None, NOT_PRIMARY_KEY],
+# First association equipment name.
+[5,"EQUIPMENT_1","STRING",NULLABLE, None, NOT_PRIMARY_KEY],
+# First association equipment ID.
+[6,"EQUIPMENT_1_ID","INTEGER",NULLABLE, None, NOT_PRIMARY_KEY],
+# First association equipment serial number.
+[7,"EQUIPMENT_1_SER","STRING",NULLABLE, None, NOT_PRIMARY_KEY],
+# Second association equipment name.
+[8,"EQUIPMENT_2","STRING",NULLABLE, None, NOT_PRIMARY_KEY],
+# Second association equipment ID.
+[9,"EQUIPMENT_2_ID","INTEGER",NULLABLE, None, NOT_PRIMARY_KEY],
+# Second association equipment serial number.
+[10,"EQUIPMENT_2_SER","STRING",NULLABLE, None, NOT_PRIMARY_KEY],
+# Tonnage.
+[11,"PAYLOAD","DOUBLE",NULLABLE, None, NOT_PRIMARY_KEY],
+# Status of the dumping bed of the truck.
+[12,"DUMP_BED","INTEGER",NULLABLE, None, NOT_PRIMARY_KEY],
+# Status of the truck (running, stopped, loaded, and empty).
+[13,"STATE","STRING",NULLABLE, None, NOT_PRIMARY_KEY],
+# UTM easting coordinates.
+[14,"X_UTM","DOUBLE",NULLABLE, None, NOT_PRIMARY_KEY],
+# UTM northin coordinates.
+[15,"Y_UTM","DOUBLE",NULLABLE, None, NOT_PRIMARY_KEY],
+# UTM altitude.
+[16,"Z_UTM","DOUBLE",NULLABLE, None, NOT_PRIMARY_KEY],
+# UTM zone.
+[17,"ZONE_UTM","STRING",NULLABLE, None, NOT_PRIMARY_KEY],
+# Ground speed from GPS.
+[18,"GROUND_SPEED","DOUBLE",NULLABLE, None, NOT_PRIMARY_KEY],
+# X-axis acceleration.
+[19,"X_ACCEL","DOUBLE",NULLABLE, None, NOT_PRIMARY_KEY],
+# Y-axis acceleration.
+[20,"Y_ACCEL","DOUBLE",NULLABLE, None, NOT_PRIMARY_KEY],
+# Z-axis acceleration.
+[21,"Z_ACCEL","DOUBLE",NULLABLE, None, NOT_PRIMARY_KEY],
+
+#===============================================================================
+# Payload interface additional informations.
+#===============================================================================
+
+# Left-tire-front pressure.
+[22,"LT_F_PRESSURE","DOUBLE",NULLABLE, None, NOT_PRIMARY_KEY],
+# Left-tire-rear pressure.
+[23,"LT_R_PRESSURE","DOUBLE",NULLABLE, None, NOT_PRIMARY_KEY],
+# Right-tire-front pressure.
+[24,"RT_F_PRESSURE","DOUBLE",NULLABLE, None, NOT_PRIMARY_KEY],
+# Right-tire-read pressure.
+[25,"RT_R_PRESSURE","DOUBLE",NULLABLE, None, NOT_PRIMARY_KEY],
+# Engine oil pressure.
+[26,"ENG_OIL_PRESSURE","DOUBLE",NULLABLE, None, NOT_PRIMARY_KEY],
+# Fuel pressure.
+[27,"FUEL_PRESSURE","DOUBLE",NULLABLE, None, NOT_PRIMARY_KEY],
+# Air filter pressure.
+[28,"AIR_FILT_PRESSURE","DOUBLE",NULLABLE, None, NOT_PRIMARY_KEY],
+# Engine oil level.
+[29,"ENG_OIL_LEVEL","DOUBLE",NULLABLE, None, NOT_PRIMARY_KEY],
+# Tank fuel level.
+[30,"TANK_FUEL_LEVEL","DOUBLE",NULLABLE, None, NOT_PRIMARY_KEY],
+# Engine coolant level.
+[31,"ENG_COOL_LEVEL","DOUBLE",NULLABLE, None, NOT_PRIMARY_KEY],
+# Engine coolant temperature.
+[32,"ENG_COOL_TEMP","DOUBLE",NULLABLE, None, NOT_PRIMARY_KEY],
+# Brake oil temperature.
+[33,"BRAKE_OIL_TEMP","DOUBLE",NULLABLE, None, NOT_PRIMARY_KEY],
+# Engine speed.
+[34,"ENG_SPEED","DOUBLE",NULLABLE, None, NOT_PRIMARY_KEY],
+# Fuel consumption rate.
+[35,"FUEL_CONS_RATE","DOUBLE",NULLABLE, None, NOT_PRIMARY_KEY],
+# Retarder/slower.
+[36,"SLOWER","DOUBLE",NULLABLE, None, NOT_PRIMARY_KEY],
+# Foot brake status.
+[37,"FOOT_BRAKE","DOUBLE",NULLABLE, None, NOT_PRIMARY_KEY],
+# Current gear.
+[38,"ACTUAL_GEAR","DOUBLE",NULLABLE, None, NOT_PRIMARY_KEY]
+
+#===============================================================================
+# < IMPORTANT >
+# - DO NOT CHANGE THE EXISTING ROWS ABOVE.
+# - ADD NEW COLUMN WITH PROPERTIES HERE.
+#===============================================================================
+]
+
+
+#===============================================================================
+# Structure for defining the Cycle table in the database.
+#===============================================================================
+db_cycle=[
+# Primary key.
+[0, "PK", "INTEGER", NOT_NULL, None, PRIMARY_KEY],
+# Cycle time.
+[1, "DATE_TIME", "TIMESTAMP", NOT_NULL, None, NOT_PRIMARY_KEY],
+# Time stamp of the cycle recorded.
+[2, "TIME_STAMP", "TIMESTAMP", NOT_NULL, None, NOT_PRIMARY_KEY],
+# Equipment serial number.
+[3, "SERIAL", "TEXT", NULLABLE, None, NOT_PRIMARY_KEY],
+# Equipment name.
+[4, "EQUIPMENT", "TEXT", NULLABLE, None, NOT_PRIMARY_KEY],
+# Current operator of the cycle.
+[5, "OPERATOR", "TEXT", NULLABLE, None, NOT_PRIMARY_KEY],
+# Product origin.
+[6, "ORIGIN", "TEXT", NULLABLE, None, NOT_PRIMARY_KEY],
+# Product destination.
+[7, "DESTINATION", "TEXT", NULLABLE, None, NOT_PRIMARY_KEY],
+# Loader associated.
+[8, "LOADER", "TEXT", NULLABLE, None, NOT_PRIMARY_KEY],
+# Dozer associated.
+[9, "DOZER", "TEXT", NULLABLE, None, NOT_PRIMARY_KEY],
+# Truck load in tonnage.
+[10, "PAYLOAD", "DOUBLE", NULLABLE, None, NOT_PRIMARY_KEY],
+# Loader tonnage.
+[11, "LOADER_PAYLOAD", "DOUBLE", NULLABLE, None, NOT_PRIMARY_KEY],
+# Duration when equipment is traveling while empty.
+[12, "TRAVEL_EMPTY_TIME", "DOUBLE", NULLABLE, None, NOT_PRIMARY_KEY],
+# Duration when equipment is stopped while empty.
+[13, "STOP_EMPTY_TIME", "DOUBLE", NULLABLE, None, NOT_PRIMARY_KEY],
+# Duration when equipment is traveling while loaded.
+[14, "TRAVEL_LOADED_TIME", "DOUBLE", NULLABLE, None, NOT_PRIMARY_KEY],
+# Duration when equipment is stopped while loaded.
+[15, "STOP_LOADED_TIME", "DOUBLE", NULLABLE, None, NOT_PRIMARY_KEY],
+# Duration of loading.
+[16, "LOADING_TIME", "DOUBLE", NULLABLE, None, NOT_PRIMARY_KEY],
+# Duration of dumping.
+[17, "DUMPING_TIME", "DOUBLE", NULLABLE, None, NOT_PRIMARY_KEY],
+# Distance in meters of equipment while traveling empty.
+[18, "TRAVEL_EMPTY_DISTANCE", "DOUBLE", NULLABLE, None, NOT_PRIMARY_KEY],
+# Distance in meters of equipment while traveling loaded.
+[19, "TRAVEL_LOADED_DISTANCE", "DOUBLE", NULLABLE, None, NOT_PRIMARY_KEY],
+# Coordinates where product is loaded in UTM format.
+[20, "X_LOADING", "DOUBLE", NULLABLE, None, NOT_PRIMARY_KEY],
+[21, "Y_LOADING", "DOUBLE", NULLABLE, None, NOT_PRIMARY_KEY],
+[22, "Z_LOADING", "DOUBLE", NULLABLE, None, NOT_PRIMARY_KEY],
+# Heading of equipment while loading.
+[23, "AZIMUTH_LOADING", "DOUBLE", NULLABLE, None, NOT_PRIMARY_KEY],
+# Coordinates where the product is dumped in UTM format.
+[24, "X_DUMPING", "DOUBLE", NULLABLE, None, NOT_PRIMARY_KEY],
+[25, "Y_DUMPING", "DOUBLE", NULLABLE, None, NOT_PRIMARY_KEY],
+[26, "Z_DUMPING", "DOUBLE", NULLABLE, None, NOT_PRIMARY_KEY],
+# Heading of equipment while dumping.
+[27, "AZIMUTH_DUMPING", "DOUBLE", NULLABLE, None, NOT_PRIMARY_KEY],
+# ???
+[28, "LOAD_PASS", "DOUBLE", NULLABLE, None, NOT_PRIMARY_KEY],
+# Number of shifting used on the equipment during the cycle.
+[29, "SHIFT_COUNT", "DOUBLE", NULLABLE, None, NOT_PRIMARY_KEY],
+# ???
+[30, "FUEL_USED", "DOUBLE", NULLABLE, None, NOT_PRIMARY_KEY],
+# ???
+[31, "TRANSACTION_ID", "TEXT", NULLABLE, None, NOT_PRIMARY_KEY]
+]
+
+
+class Database(object):
+    """
+    Represents the functionalities of the database for the modules used by the Raspberry pi.
+    
+    :param location: Location of the database file to be used.
+    """
+    
+    global lite
+    
+    def __init__(self, location=(config.HOME+"/database/sqlite.db")):
+        
+        print("Opening connection:"+location)
+        self.con = lite.connect(location, check_same_thread=False)
+        
+        # Initialise STATUS database.
+        self.checkTable("STATUS")
+        # Initialise CYCLE database.
+        self.checkTable("CYCLE")
+    
+    def __str__(self):
+        return ('Database: (Location:'
+            + str(self.location) + ')')
+
+    #===========================================================================
+    # def CreateTableForGPS(self):
+    #     """
+    #     A function to be called to create a table if not exists named 'GPSDATA' for the lmrpi database.
+    #     """
+    #     with self.con :
+    #         cur = self.con.cursor()
+    #         self.con.execute("CREATE TABLE IF NOT EXISTS GPSDATA (PK INTEGER PRIMARY KEY AUTOINCREMENT,"+ 
+    #                                     "DATETIME TIMESTAMP, GPSTIME TEXT, "+
+    #                                     "LATITUDE DOUBLE, LONGITUDE DOUBLE, ALTITUDE DOUBLE);")
+    #                 
+    #         self.con.commit()
+    #===========================================================================
+    
+    #===========================================================================
+    # def CreatTableForAccelerometer(self):
+    #     """
+    #     A function to be called to create a table if not exists named 'ACCELEROMETER' for the lmrpi database.
+    #     """
+    #     with self.con :
+    #         cur = self.con.cursor()
+    #         self.con.execute("CREATE TABLE IF NOT EXISTS ACCELEROMETERDATA (PK INTEGER PRIMARY KEY AUTOINCREMENT,"+ 
+    #                                     "DATETIME TEXT, X DOUBLE, "+
+    #                                     "Y DOUBLE, Z DOUBLE);")
+    #                 
+    #         self.con.commit()
+    #===========================================================================
+                          
+    #===========================================================================
+    # def CreateTableForLoadrite(self):
+    #     """
+    #     A function to be called to create a table if not exists named 'LOADRITEDATA' for the lmrpi database.
+    #     """
+    #     with self.con :
+    #         cur = self.con.cursor()
+    #         self.con.execute("CREATE TABLE IF NOT EXISTS LOADRITEDATA (PK INTEGER PRIMARY KEY AUTOINCREMENT,"+ 
+    #                                     "DATETIME TIMESTAMP, EVENT TEXT, BUCKET DOUBLE, WEIGHT DOUBLE, CURRENT WEIGHT TEXT"+
+    #                                     "BUCKET WEIGHT DOUBLE, TARGET WEIGHT DOUBLE, SHORT WEIGHT TARGET DOUBLE"+ 
+    #                                     "PRODUCT_NUMBER DOUBLE, NEW_PRODUCT NUMBER PRODUCT TEXT, ORIGIN TEXT);")
+    #                 
+    #         self.con.commit()
+    #===========================================================================
+                    
+    #===========================================================================
+    # def InsertGPSData(self, utcTime, ll, altitude):
+    #     """
+    #     A function to be used to insert gps data into the database.
+    #     """
+    #     with self.con:
+    #         cur = self.con.cursor()
+    #         cur.execute("INSERT INTO GPSDATA VALUES (NULL, datetime('now','localtime'), ?, ?, ?, ?);", 
+    #             (str(utcTime), ll.latitude , ll.longitude, altitude))
+    #         self.con.commit()
+    #===========================================================================
+
+    #===========================================================================
+    # def InsertAccelerometerData(self, accelerations):
+    #     """
+    #     A function to be used to insert accelerometer data into the database.
+    #     """
+    #     try:
+    #         self.con.executemany	("INSERT INTO ACCELEROMETERDATA VALUES ( NULL, ?, ?, ?, ?);",
+    #         (accelerations))
+    #         self.con.commit()
+    #            
+    #     except Exception as e:
+    #         print(e)
+    #===========================================================================
+            
+#===============================================================================
+#     def InsertLoadriteData(self, event, bucket, weight, current_weight, weight_needed, product, product_num, newproduct_num, origin):
+#         """
+#         A funtion to be used to insert Loadrite data into the database.
+#         """
+# 
+#         with self.con:
+#             cur = self.con.cursor()
+#             cur.execute("INSERT INTO LOADRITEDATA VALUES (NULL, datetime('now','localtime'), ?, ?, ?, ?, ?, ?, ?, ?, ?);", 
+#                 (event, bucket, weight, current_weight, weight_needed, str(product), product_num, newproduct_num, str(origin)))
+#             self.con.commit()
+#===============================================================================
+              
+              
+    #===========================================================================
+    # def insertStatusData(self, statuses=None):
+    #     """
+    #     Insert status data.
+    #     """
+    #     try:
+    #         self.con.executemany("INSERT INTO STATUS VALUES ( NULL, "+
+    #             "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "+
+    #             "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);",
+    #              (statuses))
+    #         self.con.commit()
+    #            
+    #     except Exception as e:
+    #         print(e)
+    #===========================================================================
+    
+    
+    #===========================================================================
+    # def insertCycleData(self, data):
+    #     """
+    #     Insert cycle data into the database.
+    #     """
+    #     
+    #     for k in data.keys():
+    #         print(k, "=", data[k], ", type=", type(data[k]))
+    #     
+    #     with self.con:
+    #         cur = self.con.cursor()
+    #         
+    #         cur.execute("INSERT INTO TRUCK_CYCLE VALUES (NULL, "+
+    #             "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "+
+    #             "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);", 
+    #             (data["DATETIME"],
+    #             data["SERIAL"],
+    #             data["EQUIPMENT"],
+    #             data["OPERATOR"],
+    #             data["ORIGIN"],
+    #             data["DESTINATION"],
+    #             data["LOADER"],
+    #             data["DOZER"],
+    #             data["PAYLOAD"],
+    #             data["LOADER_PAYLOAD"],
+    #             data["TRAVEL_EMPTY_TIME"],
+    #             data["STOP_EMPTY_TIME"],
+    #             data["TRAVEL_LOADED_TIME"],
+    #             data["STOP_LOADED_TIME"],
+    #             data["LOADING_TIME"],
+    #             data["DUMPING_TIME"],
+    #             data["TRAVEL_EMPTY_DISTANCE"],
+    #             data["TRAVEL_LOADED_DISTANCE"],
+    #             data["X_LOADING"],
+    #             data["Y_LOADING"],
+    #             data["Z_LOADING"],
+    #             data["HEADING_LOADING"],
+    #             data["X_DUMPING"],
+    #             data["Y_DUMPING"],
+    #             data["Z_DUMPING"],
+    #             data["HEADING_DUMPING"],
+    #             data["LOAD_PASS"],
+    #             data["SHIFT_COUNT"],
+    #             data["FUEL_USED"],
+    #             data["TRANSACTION_ID"]))
+    #             
+    #         self.con.commit()
+    #===========================================================================
+            
+    
+    def createTable(self, table=None):
+        """
+        Creates an empty table. If table already exists: does nothing.
+        
+        :param table: Name of the table to be created.
+        """
+        tmp_columns=[]
+        if table.upper()=="STATUS":
+            tmp_columns=db_status
+        elif table.upper()=="CYCLE":
+            tmp_columns=db_cycle
+        
+        
+        fields="("
+        for i in range(len(tmp_columns)):
+            
+            # [cid, name, type, notnull, default_value, is_pk]
+            c=tmp_columns[i]
+            fields+=c[1]+" "+c[2]
+            if c[5]==1:
+                fields+=" PRIMARY KEY AUTOINCREMENT"
+            else:
+                if c[3]==1:
+                    fields+=" NOT NULL"
+            if not i==(len(tmp_columns)-1):
+                fields+=", "
+        fields+=")"
+        
+        query="CREATE TABLE IF NOT EXISTS "+table.upper()+fields
+        #print(query)
+        self.con.execute(query)
+        
+    
+    def listColumns(self, table=None):
+        """
+        Return the list of columns and properties.
+        
+        :param table: Name of the table to list the columns.
+        """
+        if table==None:
+            return None
+        
+        with self.con:           
+            # User pragma to display the list of columns of the table. 
+            query="pragma table_info("+table+")"
+            raw_info=self.con.execute(query)
+            # Convert sqlite list to python list.
+            ret=[]
+            for r in raw_info:
+                ret.append(r)
+            # Return column infos.
+            return ret
+    
+    
+    def checkTable(self, table=None):
+        """
+        Checks the database and make adjustments if necessary.
+        
+        :param table: Name of the table to check.
+        """
+        
+        if table==None:
+            return None
+        
+        # Populate temporary table variable to be used in the iteration.
+        tmp_table=None
+        if table.upper()=="STATUS":
+            tmp_table=db_status
+        elif table.upper()=="CYCLE":
+            tmp_table=db_cycle
+        
+        # Try to create the table. If already existing, does nothing.
+        self.createTable(table)
+        
+        # Create mapping for the existing columns.
+        existing_columns={}
+        for i in self.listColumns(table):
+            existing_columns[i[0]]=i
+        #print("Existing columns : ")
+        #print(existing_columns)
+        
+        for i in tmp_table:
+            # Format >> [cid, name, type, is_notnull, default_value, primary_key]
+            
+            # Get equivalent column information based on the column ID.
+            # It will be used to compare the existing one with the defined
+            # one for checking the changes or the column.
+            ex_col=None
+            if i[0]<len(existing_columns):
+                ex_col=existing_columns.get(i[0])
+                #for ind in range(5):
+                    #eq="False"
+                    #if i[ind]==ex_col[ind]:
+                        #eq="True"
+                        #print(i[ind], ex_col[ind], eq)
+            # Add new column if not yet existing.
+            else:
+                print(len(existing_columns)-1)
+                # Basic column declaration.
+                query="ALTER TABLE "+table+" ADD COLUMN "+i[1]+" "+i[2]
+                # Not-null parameter.
+                if i[3]==1:
+                    query+=" NOT NULL"
+                # Default value parameter.
+                if not i[4]==None:
+                    query+=" "+i[4]
+                # 
+                # Ignore primary key. Adding new columns should not include PK.
+                #
+                
+                # Execute query. 
+                self.con.execute(query)
+            
+            
+    def insertDataMany(self, table=None, data=None):
+        """
+        Insert multiple lines of data to the sqlite database.
+        
+        :param table: Table name to append the data.
+        :param data: Data to append into the database (in array or classes format).
+        """
+        
+        if table==None or data==None:
+            return
+        
+        try:
+            # Main query.
+            query="INSERT INTO "+table+" VALUES("
+            
+            tmp_table=None
+            
+            if table.upper()=="STATUS":
+                tmp_table=db_status
+            #for p in tmp_table:
+            #    print(p)
+            # Values parameters.
+            values=""
+            l=len(tmp_table) # Table length.
+            for i in range(len(tmp_table)):
+                c=tmp_table[i]
+                # Format >> [cid, name, type, is_notnull, default_value, primary_key]
+
+                # If PK, place value as null.
+                if c[5]==1:
+                    values+="NULL"
+                else:
+                    values+="?"
+                
+                # If not yet EOL, append comma. 
+                if i<(l-1):
+                    values+=", "
+            
+            # Append values to the query.
+            query+=values+");"
+            
+            # Filterred and arranged data to insert into the database.
+            to_insert=[]
+            for o in data:
+                _to_insert=[]
+                for c in tmp_table:
+                    # If PK, do not append data.
+                    if c[5]==1:
+                        pass
+                    # The data key and field value of the table must match.
+                    # This will be the basis to get the values.
+                    else:                        
+                        if hasattr(o, c[1]):
+                            _to_insert.append(getattr(o, c[1]))
+                        else:
+                            _to_insert.append(None)
+                # Append generated filterred data.
+                to_insert.append(_to_insert)
+            
+            # Execute query to append data to the database.
+            self.con.executemany(query, (to_insert))
+            self.con.commit()
+            
+        except Exception as e:
+            print(e)
+        
+        
+        
+        
+        
+        
+        
+        
+        

@@ -1,0 +1,97 @@
+import RPi.GPIO as GPIO
+import time
+import config
+
+class IR_E18D80NK:
+	"""
+	IR adjustable motion sensor.
+	
+	Minimum sensing range = 3 cm.
+	Maximum sensing range = 80 cm.
+	"""
+	
+	global GPIO
+	
+	# Global variable and the default value is one as off.
+	Status = 1
+	
+	def __init__(self, pin = config.DUMP_SENSOR_PIN):
+		"""
+		Initialize the IR_E18D8ONK class and GPIO.
+		
+		:param pin: Pin number for IR motion sensor input.
+		"""
+		
+		# Cleanup first before initializing.
+		GPIO.cleanup()
+	
+		# Use GPIO.setwarning(false) to disable the warning 
+		# sign on start up.
+		GPIO.setwarnings(False)
+		
+		# The GPIO.BOARD option specifies that you are referring to the 
+		# pins by the number of the pin the plug.
+		#
+		# The GPIO.BCM option means that you are referring to the pins 
+		# by the "Broadcom SOC channel" number, these are the numbers 
+		# after "GPIO".
+		#
+		# Link source: http://raspberrypi.stackexchange.com/questions/12966/what-is-the-difference-between-board-and-bcm-for-gpio-pin-numbering
+		GPIO.setmode(GPIO.BOARD)
+		
+		# Set up pin as input then, with 1 as default value.
+		GPIO.setup(pin, GPIO.IN)
+		
+		# Store pin variable into used_pin.
+		self.used_pin=pin
+		
+		print "Initialize Complete" 
+		
+		
+	def readIR(self):
+		"""
+		Get the IR motion sensor output.
+		"""
+		
+		# Variable to record the previous status.
+		prev_status = 0
+		# Counting of status on the same sequence.
+		count = 0
+		
+		# To read the data infinetely.
+		while True:
+			
+			# Get input data from used_pin and store in i variable.
+			i=GPIO.input(self.used_pin)
+			
+			# Check if current status is equal to previous status.
+			if i == prev_status:
+				# If current status is the same as the previous one,
+				# increment the counter.
+				count=count+1
+			else :
+				# If current status is not the same as the previous one,
+				# reset the counter.
+				count=0
+			
+			# If counter reached 50, which is equivalent to 5 seconds,
+			# and the status is not the same with the current global status,
+			# Update global variable (Status).
+			if count>=50 and i!=self.Status:
+				
+				# Update global status.
+				self.Status = i
+				
+				if i==0:
+					print "Container Down"
+				else:
+					print "Container UP"
+					
+				# Reset counter.
+				count=0
+			
+			# Record previous status.
+			prev_status = i
+			
+			# Delay time for  to read the data.
+			time.sleep(0.1)

@@ -1,0 +1,293 @@
+import time
+import serial
+import sys
+import threading
+import copy
+import datetime
+import config
+from aifc import data
+
+class GSM(object):
+
+    def __init__(self, port='/dev/ttyUSB0', baud=9600, bsize=8, parity='N',
+    stopbit=1, timeout=0):
+        
+        self.uart = serial.Serial(port, baud, bsize, parity, stopbit, timeout)
+        print("INITIALIZING USB SERIAL")
+        
+    gsm_cache = ""
+    start_time = ""
+    
+    def readReply(self, stopEvent):
+        
+        #Read reply from GSM.
+        
+        self.start_time=datetime.datetime.now()
+        self.gsm_cache = ""
+        time.sleep(0)
+        while not stopEvent.is_set():
+            data = self.uart.readline()
+            self.gsm_cache+=data
+            #print "GSM_cache"+self.gsm_cache
+            time.sleep(0)
+    
+    def analyzeReply(self,stopEvent):
+        
+        #Analyze data.
+        while not stopEvent.is_set():
+            message=copy.copy(self.gsm_cache)
+            if message and message.find('+HTTPACTION: 1,')>=0:
+                print (str("----"+message+"---"))
+                stopEvent.set()
+                time.sleep(0.1)
+                return
+            else:
+                for f in ['OK', 'ERROR', 'DOWNLOAD', '100.', '10.', '122.']:
+                    if message and message.find(f)>=0 and message.endswith('\n'):
+                        print (str('copy message: '+message)+"F message: "+f)
+                        stopEvent.set()
+                        time.sleep(0.1)
+                        return
+            time.sleep(0)
+                        
+    
+    def sendCommand(self,atCommand, delay, timeout=10):
+        # Stop thread.
+        stopEvent=threading.Event()
+        #stopEvent.clear()
+        
+        # Start Thread.
+        read_reply = threading.Thread(target=self.readReply, args=(stopEvent,))
+        read_reply.start()
+        analyze_reply = threading.Thread(target=self.analyzeReply, args=(stopEvent,))
+        analyze_reply.start()
+        
+        # Send AT Commands.
+        self.uart.write(atCommand+'\r')
+        time.sleep(delay)
+        while read_reply.isAlive() or analyze_reply.isAlive():
+            
+            diff=(datetime.datetime.now()-self.start_time).total_seconds()
+            #print diff
+            if timeout and diff>timeout:
+                msg=copy.copy(self.gsm_cache)
+                print (str("-FORCEKILL-"+"AT COMMANDS: "+atCommand+"MESSAGE: "+msg+"-FORCEKILL-"))
+                self.uart.write(atCommand+'\r')
+                stopEvent.set()
+                time.sleep(0.2)
+                break
+            time.sleep(0)
+        return
+
+    def checkGSM(self):
+        """
+        Check GSM status with simple AT command.
+        """
+        self.sendCommand('AT', 0, 1)
+        
+        
+    def checkConnectionStatus(self):
+
+        self.sendCommand('AT', 0.1)
+        # Check network registration.
+        self.sendCommand('AT+CREG?',0.1)
+        # Check signal strength.
+        self.sendCommand('AT+CSQ',0.1)
+        # Verify whether the SIM card is ready.
+        self.sendCommand("AT+CPIN?", 0.1)
+        # SHUT all existing communication.
+        self.sendCommand('AT+CIPSHUT', 0.1)
+
+    def connectToInternet(self):
+        """
+        Connect to post http.
+        """
+        self.sendCommand('AT',0.1)
+        #Register connection.
+        self.sendCommand('AT+CREG=1',0.1)
+        # Set PDP attach (force even if already set to 1).
+        self.sendCommand('AT+CGATT=1',0.1)
+        # Setting connection to GPRS.
+        #print('Setting up the connection.')
+        self.sendCommand('AT+SAPBR=3,1,"CONTYPE","GPRS"',0.1)
+        # Setting up the APN.
+        self.sendCommand('AT+SAPBR=3,1,"APN","internet.globe.com.ph"',0.1)
+        # Disable GPRS.
+        self.sendCommand('AT+SAPBR=0,1',0.1)
+        # Enable GPRS.
+        self.sendCommand('AT+SAPBR=1,1',0.1)
+        # Query if connection is setup properly.
+        self.sendCommand('AT+SAPBR=2,1',0.1)
+
+    def httpConfig(self,data):
+        """
+        HTTP confuguration.
+        
+        :param data: Dynamic class with variables stored for usage.
+        """
+        ###########################################################
+        # For testing....
+        #self.sendCommand('AT+HTTPTERM',0.1)
+        #self.sendCommand('AT+HTTPINIT',0.1)
+                
+        ## Start by setting up the HTTP bearer profile identifier.
+        #self.sendCommand('AT+HTTPPARA="CID",1',0.1)
+    
+        #self.sendCommand('AT+HTTPPARA="URL","http://178.33.212.69/PCC4/PccServlet?user=logimine&pass=PCC4&id=21&x=788965.0&y=783592.6&z=1"',1)
+        ## Set the content.
+        ## There are different kinds of CONTENT. In the sample it use application/x-www-form-urlencoded. 
+        #self.sendCommand('AT+HTTPPARA="CONTENT","application/x-www-form-urlencoded"\r',0.1)
+        ###########################################################
+        # Reinitialize HTTP.
+        self.sendCommand('AT+HTTPTERM\r',0.1)
+        self.sendCommand('AT+HTTPINIT\r',0.1)
+                
+        # Start by setting up the HTTP bearer profile identifier.
+        self.sendCommand('AT+HTTPPARA="CID",1\r',0.1)
+        
+        #print(data.__dict__)
+        str_datetime=str( getattr(data, "datetime")) if hasattr(data, "datetime") else None
+        str_lat=str( getattr(data, "latitude") ) if hasattr(data, "latitude") else None
+        str_lon=str( getattr(data, "longitude") ) if hasattr(data, "longitude") else None
+        str_id=str( getattr(data, "equipment_id") ) if hasattr(data, "equipment_id") else None
+        str_speed=str( getattr(data, "ground_speed") ) if hasattr(data, "ground_speed") else None
+        str_azimuth=str( getattr(data, "azimuth") ) if hasattr(data, "azimuth") else None
+        str_hdop=str( getattr(data, "hdop") ) if hasattr(data, "hdop") else None
+        str_nsv=str( getattr(data, "nsv")) if hasattr(data, "nsv") else None
+        str_x=str( getattr(data, "x_utm") ) if hasattr(data, "x_utm") else None
+        str_y=str( getattr(data, "y_utm") ) if hasattr(data, "y_utm") else None
+        str_z=str( getattr(data, "z_utm") ) if hasattr(data, "z_utm") else None
+        str_weight=str(getattr(data,"payload")) if hasattr(data, "payload") else None
+        str_state=str( getattr(data, "state")) if hasattr(data, "state") else None
+        
+        #=======================================================================
+        # For TRACCAR interface.
+        #=======================================================================
+        if config.GSM_INTERFACE.lower()=="traccar":
+            self.sendCommand('AT+HTTPPARA="URL","http://vps190.logimine.net:5055/'+ \
+                             '?id='+str_id+ \
+                             '&lat='+str_lat+ \
+                             '&lon='+str_lon+ \
+                             '&speed='+str_speed+ \
+                             '&hdop='+str_hdop+ \
+                             '"\r', 0)
+            
+        #=======================================================================
+        # For PCC4 Interface.
+        #=======================================================================
+        elif config.GSM_INTERFACE.lower()=="pcc4":
+            # Gather all parameters.
+            params=""
+            for p in data.__dict__.keys():
+                if p.startswith('__'): continue
+                params+='&'+p+'='+str( getattr(data, p) )
+            # Complete command with parameters.
+            command='AT_HTTPPARA="URL",'+config.URL_ADDRESS+\
+                '?user='+config.USERNAME+\
+                '&pass='+config.PASSWORD+\
+                params
+            print(command)
+            # Execute command.
+            self.sendCommand(command, 0)
+            #===================================================================
+            # self.sendCommand('AT+HTTPPARA="URL",'+config.URL_ADDRESS+\
+            #                  '?user=logimine'+\
+            #                  '&pass=PCC4'+\
+            #                  '&module=lmnet'+\
+            #                  '&action=update'+\
+            #                  '&datetime='+str_datetime+\
+            #                  '&id='+str_id+\
+            #                  '&loader_id=98'+\
+            #                  '&type='+config.EQUIPMENT_TYPE+\
+            #                  '&mode='+str_state+\
+            #                  '&x='+str_x+\
+            #                  '&y='+str_y+\
+            #                  '&z='+str_z+\
+            #                  '&speed='+str_speed+\
+            #                  '&nsv='+str_nsv+\
+            #                  '&weight='+str_weight\
+            #                  ,0.1)
+            #===================================================================
+        
+        # Set the content.
+        # There are different kinds of CONTENT. In the sample it use application/x-www-form-urlencoded. 
+        self.sendCommand('AT+HTTPPARA="CONTENT","application/x-www-form-urlencoded"',0.1)
+
+        
+    def httpSend(self,data):
+        """
+        Connect to post http.
+        
+        :param data: Dynamic class with variables stored for usage.
+        """
+        self.httpConfig(data)
+        # Check signal status.
+        self.sendCommand('AT+CSQ', 0, 1)
+        self.httpConfig()
+        # Tell the module that you will be sending (ex. 200) bytes in 1 seconds of inactivity.
+        self.sendCommand('AT+HTTPDATA=0,1000', 0.1)
+        # Execute the http post command so that the buffer contetents are post to server.
+        self.sendCommand('AT+HTTPACTION=1',3)
+        
+    def connectToServer(self, URL = config.URL_ADDRESS, Port = config.TCP_PORT):
+        """
+        Initialize connection to the server.
+        """        
+        #=======================================================================
+        # Bring up process
+        #=======================================================================
+        
+        # Check AT status.
+        print("Checking AT Status...")
+        self.sendCommand('AT\r',1)
+        # Exit transparent mode if set.
+        print("Exit transparent mode...")
+        self.sendCommand('+++', 5)
+        
+        #=======================================================================
+        # Initial parameters
+        #=======================================================================
+        
+        # Register connection.
+        self.sendCommand('AT+CREG=1', 1)
+        # Shut all existing connections.
+        self.sendCommand('AT+CIPSHUT', 1)
+        # Set to single connection.
+        self.sendCommand('AT+CIPMUX=0',1)
+        # Set APN settings.
+        # TODO: Flexible settings...
+        self.sendCommand('AT+CGDCONT=1,"IP","internet"', 10)
+        #=======================================================================
+        # Connect to server
+        #=======================================================================
+        
+        # Set PDP attach (force even if already set to 1).
+        self.sendCommand('AT+CGATT=1',3)
+        # Set to transparent mode.
+        self.sendCommand('AT+CIPMODE=1', 3)
+        # Start task and set APN.
+        self.sendCommand('AT+CSTT="CMNET"', 3)
+        # Bring up wireless connection (GPRS or CSD)
+        self.sendCommand('AT+CIICR', 3)
+        # Get local UP address.
+        self.sendCommand('AT+CIFSR', 3)
+        # Start connection.
+        self.sendCommand('AT+CIPSTART="TCP","'+ URL +'","'+ str(Port) +'"', 15)
+
+
+    def closeConnectionToServer(self):
+        """
+        Close the connection to the server.
+        """
+        self.sendCommand('AT+CIPSHUT',3)
+        self.sendCommand('AT+CGATT=0',3)
+"""
+gsm = GSM()
+print('start')
+gsm.checkConnectionStatus()
+gsm.connectToInternet()
+while True:
+    gsm.httpConfig()
+    gsm.httpSend()
+print 'End'
+"""

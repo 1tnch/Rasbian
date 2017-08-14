@@ -1,0 +1,203 @@
+import bluetooth
+import time
+import dbus.mainloop.glib
+import os
+
+
+"""
+Bluetooth Communication Interface
+"""
+class BluetoothCommunication():
+    
+    # Bluetooth socket connection. None if disconnected.
+    # It could be possible that the socket is not None when disconnected.
+    # Socket closing should be handled properly.
+    socket=None
+    
+    
+    # Status of the bluetooth connection.
+    is_connected=False
+    def get_connection_status(self):
+        def _is_connected():
+            return self.is_connected
+        return _is_connected
+    
+    
+    def __init__(self):
+        
+        # For making bluetooth discoverable on/off
+        global mainloop
+        dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
+        bus = dbus.SystemBus()
+        self.adapter_props = dbus.Interface(bus.get_object('org.bluez', '/org/bluez/hci0')
+        , "org.freedesktop.DBus.Properties");
+       
+        
+        # Initialize Bluetooth Communication
+        print("Initialize Bluetooth Communication")
+
+
+    def searchDevices(self):
+        """
+        Search nearby devices.
+        """
+        print("Searching...") 
+        devices = bluetooth.discover_devices(duration=5, lookup_names=True)
+        print("found %d devices" % len(devices))
+        for addr, name in devices:
+            print(addr , name)
+        return devices
+
+        
+    def connectNearbyBluetoothDevice(self, port = 3, backlog = 1, size = 1024):
+        """
+        Connect to nearby device.
+        """
+        
+        while True:
+            # Turn on discoverable always.
+            self.makeDiscoverable()
+            # Scan for nearby bluetooth.
+            results = self.searchDevices()
+            for addr, name in results:
+                print(addr , name)
+            
+            # Bluetooth connection from client to server bluetooth
+            if len(results) > 0:
+                for addr , name in results:
+                    serverMACAddress = str(addr)
+                    #Connect
+                    try:
+                        # Port used to connect in the server
+                        device = bluetooth.BluetoothSocket(bluetooth.RFCOMM)
+                        device.connect((serverMACAddress, port))
+                        self.socket=device
+                        
+                        print("Connected to"+str(serverMACAddress))
+                        
+                        while self.socket!=None:
+                            # Flag connection status.
+                            self.is_connected=True
+                            #print("Client connected...")
+                            time.sleep(1)
+                        
+                    # Error handler
+                    except bluetooth.btcommon.BluetoothError as err:
+                        self.closeSocket()
+                        print(err)
+                        pass
+                            
+            time.sleep(1)
+             
+                            
+    def createBluetoothServer(self):
+        """
+        Bluetooth connection from server to client bluetooth
+        """
+        global socket
+        
+        # The MAC address of a Bluetooth adapter on the server. The server might have multiple Bluetooth adapters.
+        self.hostMACAddress = open('/sys/class/bluetooth/hci0/address').read()
+        port = 3
+        backlog = 1
+        #size = 1024
+        s = bluetooth.BluetoothSocket(bluetooth.RFCOMM)
+        s.bind((self.hostMACAddress, port))
+        s.listen(backlog)
+        self.device=s
+        
+        while True:
+            
+            self.makeDiscoverable()
+            print("Server created, waiting for client...")
+            self.device.settimeout(60)
+            
+            try:
+                client, clientInfo = self.device.accept()
+                # Assign connection with client to global socket.
+                self.socket=client
+                self.is_connected=True
+                print("Connected to: ", clientInfo)
+
+                # Keep connected until error. The error will be the
+                # disconnection flag.
+                while True:
+                    if len(client.recv(1024))==0:
+                        self.closeSocket()
+                        break
+
+            # Error handler
+            except bluetooth.btcommon.BluetoothError as err:
+                    print("Disconnected, ", err)
+                    self.closeSocket()
+                    continue
+    
+            
+    def receiveBluetoothData(self):
+        """
+        Receive bluetooth data.
+        """
+        try:
+            if self.socket!=None:
+                data=self.socket.recv(1024)
+                return data
+                #print("Received data =>", data)
+            else:
+                pass
+        except Exception as e:
+            print(e)
+            self.socket=None
+    
+    
+    def sendBluetoothData(self, data):
+        """
+        Send bluetooth data.
+        """        
+        try:            
+            if self.socket!=None:
+                self.socket.send(data)
+            else:
+                pass
+                
+        except Exception as e:
+            print(e)
+            self.socket=None
+
+
+    def closeSocket(self):
+        """
+        Forcefully close the bluetooth socket.
+        """
+        try:
+            self.socket.close()
+            self.socket=None
+            self.is_connected=False
+            
+        except Exception as e:
+            self.socket=None
+            self.is_connected=False
+            print(e)
+
+    def bluetoothON(self):
+        """
+        Turn on bluetooth device.
+        """
+        os.system("sudo systemctl start bluetooth")
+        
+    def bluetoothOFF(self):
+        """
+        Turn off bluetooth device.
+        """
+        os.system("sudo systemctl stop bluetooth")
+        
+    def makeDiscoverable(self):
+        """
+        Make bluetooth discoverable.
+        """
+        self.adapter_props.Set("org.bluez.Adapter1", "Discoverable", dbus.Boolean(1))
+    
+    def stopDiscoverable(self):
+        """
+        Stop bluetooth discoverable.
+        """
+        self.adapter_props.Set("org.bluez.Adapter1", "Discoverable", dbus.Boolean(0))

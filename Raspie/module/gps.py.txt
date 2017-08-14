@@ -1,0 +1,786 @@
+'''
+Coordinate (GPS) package.
+'''
+
+import time
+import datetime
+import threading
+import math
+
+#from iopins.ioserial import SerialGPIO
+import serial
+
+#from database.sqlite import Database
+
+class GPS(object):
+    """
+    GPS main class.
+    """
+        
+    # X coordinates (meters)
+    x_utm=None
+    def get_x_utm(self): 
+        def _x_utm():
+            return self.x_utm
+        return _x_utm
+    
+    # Y coordinates (meters)
+    y_utm=None
+    def get_y_utm(self): 
+        def _y_utm():
+            return self.y_utm
+        return _y_utm
+    
+    # Altitude (meters)
+    z_utm=None
+    def get_z_utm(self): 
+        def _z_utm():
+            return self.z_utm
+        return _z_utm
+    
+    # Longtitude.
+    lon=None
+    def get_longitude(self):
+        def _lon():
+            return self.lon
+        return _lon
+    
+    # Latitude.
+    lat=None
+    def get_latitude(self):
+        def _lat():
+            return self.lat
+        return _lat
+    
+    # Speed (km/h).
+    ground_speed=None
+    def get_ground_speed(self):
+        def _ground_speed():
+            return self.ground_speed
+        return _ground_speed
+    
+    # Azimuth in degrees.
+    azimuth=None
+    def get_azimuth(self):
+        def _azimuth():
+            return self.azimuth
+        return _azimuth
+    
+    # Horizontal dilute of precission.
+    hdop=None
+    def get_hdop(self):
+        def _hdop():
+            return self.hdop
+        return _hdop
+        
+    # GPS reception time.
+    gps_time=None
+    def get_gps_time(self):
+        def _gps_time():
+            return self.gps_time
+        return _gps_time
+    
+    # Time difference (Date)
+    gps_time_diff=None
+    def get_gps_time_diff(self): 
+        def _gps_time_diff():
+            return self.gps_time_diff
+        return _gps_time_diff
+    
+    # Number of sattelite.
+    nsv=None
+    def get_nsv(self):
+        def _nsv():
+            return self.nsv
+        return _nsv
+    
+    # Gap time between current reception and last reception (Date).
+    reception_gap=None
+    def get_reception_gap(self):
+        def _reception_gap():
+            return self.reception_gap
+        return _reception_gap
+    
+#"""
+#    def __init__(self, RX=config.GPS_RX_PIN, TX=config.GPS_TX_PIN,
+#        baudrate=9600, bytesize=8):
+#            """
+#            Initialisation of GPS module.
+#            """
+#            self.gpio = SerialGPIO(RX, TX, baudrate, bytesize)
+#            self.gpio.openSerialGPIO()
+#            # Start thread for reading and decoding raw GPS data.
+#            thread_GPS=threading.Thread(target=self.readRawGPS, args=())
+#            thread_GPS.start()
+#            
+#            # Debug
+#            #thread_disp=threading.Thread(target=self.display, args=())
+#            #thread_disp.start()
+#            
+#            print("GPS initialized.")
+#"""
+
+    def __init__(self, port='/dev/ttyUSB0', baud=9600, bsize=8, parity='N',
+    stopbit=1, timeout=0):
+        """
+        Initialization of serial USB.
+        """
+        self.uart = serial.Serial(port, baud, bsize, parity, stopbit, timeout)
+        
+        thread_GPS=threading.Thread(target=self.readRawGPS, args=())
+        thread_GPS.start()
+        
+        
+        # Debug
+        #thread_disp=threading.Thread(target=self.display, args=())
+        #thread_disp.start()
+        print("Serial USB initialize.")
+
+    def display(self):
+        """ 
+        Debugging 
+        """
+        while True:
+            print("x=", self.x_utm)
+            print("y=", self.y_utm)
+            print("z=", self.z_utm)
+            print("spd=", self.ground_speed)
+            print("time=", self.gps_time_diff)
+            time.sleep(0.5)
+
+
+    def close(self):
+        """
+        Close bit-bang serial connection for the GPS module.
+        """
+        self.uart.close()
+
+
+    def appendToLog(self, line, gpsLog="/home/pi/Desktop/GPS.log"):
+        """
+        Append line to a text file log.
+        """
+        #print("Appending to ", gpsLog, " => ", line)
+        with open(str(gpsLog), "a") as gps_log_file:
+            gps_log_file.write("{0}".format( \
+                str(datetime.datetime.now()) + "\n" +\
+                str(line) + "\n" ))
+
+
+    def decodeGGA(self, inp=""):
+        """
+        Decode the GGA data.
+        
+        Data fetched => long-lat coordinates, and converted to UTM
+        coordinates.
+        
+        :param inp: GPGGA line from GPS raw data.
+        """
+        # Do nothing with empty input.
+        if inp=="": return
+        # Strip input.
+        inp=inp.strip()
+        # Get the NMEA sentence from the GPS reading.
+        nmea = NMEA(inp)
+        
+        # Check if the NMEA sentence is a GGA.
+        if nmea.isGGA():
+            try:
+                # Create a GGA object which validates the NMEA sentence.
+                # Throws an error if NMEA is invalid.
+                # Ignores proceeding codes on error.
+                gga = GGA(nmea)
+                
+                # Update the thread instance (global) variables.
+                self.utcTime = gga.utcTime
+                self.dateTime = datetime.datetime.now()
+                
+                # Convert GGA data to long-lat, and then UTM.
+                ll = LLCoordinate.fromGGA(gga)
+                utm = ll.getUTMCoordinate()
+                
+                # Update global variables.
+                self.x_utm=int(round(utm.easting))
+                self.y_utm=int(round(utm.northing))
+                self.z_utm=int(round(gga.gpsAltitude))
+                self.lon=getattr(ll, 'longitude')
+                self.lat=getattr(ll, 'latitude')
+                #print("Latitude => "+str(self.lat))
+                #print("Longitude => "+str(self.lon))
+                
+                # For HDOP and NSV. 
+                a_inp=inp.split(',')
+                if len(a_inp)>=7:
+                    if a_inp[6]:
+                        self.hdop=float(a_inp[6])
+                    if a_inp[7]:
+                        self.nsv=int(a_inp[7])
+               
+            except ValueError as ve:
+                print(ve)
+                pass
+
+        else:
+            # Update global variables.
+            self.x_utm=None
+            self.y_utm=None
+            self.z_utm=None
+            self.lon=None
+            self.lat=None
+        
+
+    def decodeVTG(self, inp=""):
+        """
+        Decode GPS VTG NMEA raw data.
+        
+        Data fetched => Ground speed.
+        
+        :param inp: GPVTG line from GPS raw data.
+        """
+        try:
+            if inp=="": return
+            inp=inp.strip()
+            a_inp=inp.split(',')
+            # Decode the speed (index 7)
+            if len(a_inp)>=8 and a_inp[7]:
+                self.ground_speed=int(float(a_inp[7]))
+        except Exception as e:
+            print("decodeVTG, ", e)
+            self.ground_speed=None
+
+    
+    def decodeGSV(self, inp=""):
+        """
+        Decode the GSV data from the GPS.
+        """
+        try:
+            if inp=="": return
+            inp=inp.strip()
+            a_inp=inp.split(',')
+            # Decode azimuth, which is on index 6.
+            if len(a_inp)>=7 and a_inp[6]:
+                self.azimuth=float(a_inp[6])
+        except Exception as e:
+            print("decodeGSV, ", e)
+            self.azimuth=None
+            
+
+
+    def readRawGPS(self):
+        """
+        Get the GPS raw output.
+        """
+        
+        # Create message variable.
+        lines = ""
+        
+        empty_start=None
+
+        #max_s=0
+        # Gps test.
+        #speed=10
+        while True:
+            # Read GPS data.
+            data = self.uart.readline()
+            
+            # Increment empty count.
+            if not data and not empty_start:
+                empty_start=datetime.datetime.now()
+
+            if data:
+                lines=lines+str(data)
+                empty_start=None
+            
+            diff=(datetime.datetime.now()-empty_start).total_seconds() if empty_start else None
+            # Skip when data is empty, or proceed when consecutive 
+            # empty data have been received.
+            if len(lines)>0 \
+                and diff \
+                and diff>0.1:
+                
+                #print("\n--start--\tdiff="+str(diff)+"\n"+lines+"\n--\n")
+                
+                # ---- GPS test value -----
+                
+                #===============================================================
+                # lines=("$GPGGA,155224.00,2804.50000,S,13944.50000,E,4,06,1.4,1000.0,M,50.0,M,1,0000*72\n"+
+                #     "$GPVTG,045.0,T,045.0,M,005.4,N, 0"+str(speed)+".0,K*4E\n"+
+                #     "$PTPSR,ATT,V,155224.00,045.000,0.0,N,0.0,0.0*26")
+                #===============================================================
+                
+                #===============================================================
+                #lines=("$GPGGA,155224.00,2804.50000,S,13944.50000,E,4,06,1.4,1000.0,M,50.0,M,1,0000*72\n"+
+                #     "$GPVTG,045.0,T,045.0,M,005.4,N, 04.0,K*4E\n"+
+                #     "$PTPSR,ATT,V,155224.00,045.000,0.0,N,0.0,0.0*26")
+                #===============================================================
+                
+                # Append GPS raw data to logs.
+                self.appendToLog(lines)
+                
+                # Record time received and the time difference from last reception.
+                if self.gps_time!=None:
+                    delta=datetime.datetime.now()-self.gps_time
+                    self.gps_time_diff=delta.total_seconds()
+                self.gps_time=datetime.datetime.now()
+                
+                # Extract GPGGA line from GPS raw data and decode.
+                s_index=lines.find("GPGGA")
+                e_index=lines.find("\n", s_index)
+                lineGGA=lines[s_index:e_index]
+                #print "GGA =>", lineGGA
+                if lineGGA!="" : self.decodeGGA(lineGGA)
+                
+                # Extract GPVTC line from GPS raw data and decode
+                s_index=lines.find("GPVTG")
+                e_index=lines.find("\n", s_index)
+                lineVTG=lines[s_index:e_index]
+                #print "VTG =>", lineVTG
+                if lineVTG!="" : self.decodeVTG(lineVTG)
+                
+                s_index=lines.find("GPGSV")
+                e_index=lines.find("\n", s_index)
+                lineGSV=lines[s_index:e_index]
+                print ("VTG =>" ,lineVTG)
+                if lineGSV!="" : self.decodeGSV(lineGSV)
+                print ("START OF LINE\n"+lines+"\nEND OF LINE")
+                # Reset buffer and empty counter.
+                lines=""
+                
+                empty_start=None
+                
+                time.sleep(0.1)
+                
+                    
+class NMEA(object):
+    """
+    Represents a NMEA object.
+
+    :param sentence: The NMEA sentence.
+    """
+    def __init__(self, sentence):
+        self.sentence = sentence.strip()
+        self.data = sentence.split(",")
+        
+        #if self.isGGA():
+        #    print self.sentence
+
+    def isGGA(self):
+        """
+        Checks if the sentence is GGA
+        """
+        isGGA = False
+
+        if (self.data[0][-3:] == "GGA"):
+            isGGA=True
+
+        return isGGA
+
+class GGA(object):
+    """
+    Represents a GGA object from a NMEA object.
+
+    :param nmea: The NMEA object to be represented in GGA.
+
+    :raises: ValueError if the NMEA is invalid.
+    """
+    def __init__(self, nmea):
+        self.__validateData(nmea)
+
+        self.utcTime = datetime.time(int(nmea.data[1][0:1]),int(nmea.data[1][2:3]),int(nmea.data[1][4:5]),int(nmea.data[1][7:8])*10000)
+        self.latDegree = float(nmea.data[2].split('.')[0][:-2])
+        self.latMinutes = float(nmea.data[2].split('.')[0][-2:] + '.' + nmea.data[2].split('.')[1])
+        self.latDirection = nmea.data[3].strip()
+        self.longDegree = float(nmea.data[4].split('.')[0][:-2])
+        self.longMinutes = float(nmea.data[4].split('.')[0][-2:] + '.' + nmea.data[4].split('.')[1])
+        self.longDirection = nmea.data[5].strip()
+        self.gpsAltitude = float(nmea.data[9].strip())
+    
+    '''
+    def __str__(self):
+        return ('GGA: (Latitude:' + nmea.data[2]
+        + nmea.data[3]
+        + ' Longitude:' + nmea.data[4]
+        + nmea.data[5]
+        + ')')
+    '''
+    
+    def __validateData(self, nmea):
+        """
+        Validates if the data is correct.
+
+        :param nmea: The NMEA data to be validated.
+        """
+        minimumGGAData = 5
+
+        # Data lacking
+        if len(nmea.data) < minimumGGAData:
+            raise ValueError('GGA data is lacking.')
+
+        # Data empty
+        for i in [0, 1, 2, 3, 4, 5, 9]:
+            if len(nmea.data[i]) == 0:
+                #raise ValueError('GGA data ' + str(i) + ' is empty.')
+                raise ValueError()
+        # Specific data not float.
+        for i in [1, 2, 4]:
+            if nmea.data[i].find('.') == -1:
+                #raise ValueError('GGA data ' + str(i) + ' is not in a valid format.')
+                raise ValueError()
+            try:
+                float(nmea.data[i])
+            except ValueError:
+                #raise ValueError('GGA data ' + str(i) + ' is not a float.')
+                raise ValueError()
+
+
+"""
+The `lm_coordinate` module provides functionalities involving coordinate systems
+and coordinate system conversions. The coordinate systems used in this module
+are:
+
+* UTM Coordinates
+* LL Coordinates
+"""
+
+class Ellipsoid(object):
+    """
+    Represents and ellipsoid defined by its radius and eccentricity (squared).
+
+    :param radius: The radius of the ellipsoid.
+    :param eccentricitySquared: The eccentricity (squared) of the ellipsoid.
+    """
+    def __init__(self, radius, eccentricitySquared):
+        self.radius = radius
+        self.eccentricitySquared = eccentricitySquared
+
+    def __str__(self):
+        return ('Ellipsoid: (Radius:' + self.radius
+            + ' Eccentricity (Squared):' + str(self.eccentricitySquared)
+            + ')')
+
+"""
+Ellipsoid: Various standard reference ellipsoids used in Earth coordinate conversions.
+"""
+referenceEllipsoids = {
+    'WGS-60': Ellipsoid(6378165, 0.006693422),
+    'WGS-66': Ellipsoid(6378145, 0.006694542),
+    'WGS-72': Ellipsoid(6378135, 0.006694318),
+    'WGS-84': Ellipsoid(6378137, 0.00669438)
+    }
+
+  
+
+class LLCoordinate(object):
+    """
+    Represents a coordinate with latitude and longitude which are in decimal form.
+
+    :param latitude: The latitude of the coordinate.
+    :param longitude: The longitude of the coordinate.
+
+    Usage::
+
+        sampleLL = LLCoordinate(12, 12)
+
+        # Convert the LL coordinate to UTM coordinate.
+        sampleUTM = sampleLL.convertToUTM()
+    """
+    def __init__(self, latitude, longitude):
+        self.latitude = latitude
+        self.longitude = longitude
+
+    
+    def __str__(self):
+        return ('LLCoordinate: (Latitude:' + str(self.latitude) 
+            + ' Longitude:' + str(self.longitude) 
+            + ')')
+    
+    
+    @classmethod
+    def fromGGASentence(cls, GGAsentence):
+        """
+        Creates an LL coordinate from a GGA sentence.
+
+        :param GGAsentence: The GGA sentence to be made into an LL coordinate.
+        
+        :returns: The LL coordinate.
+        """
+        nmea = NMEA(GGAsentence)
+        return cls.fromGGA(GGA(nmea))
+    
+    
+    @classmethod
+    def fromGGA(cls, gga):
+        """
+        Creates an LL coordinate from a GGA object.
+
+        :param gga: The GGA object to be made into an LL coordinate.
+
+        :returns: The LL coordinate.
+        """
+        return cls.fromDMM(gga.latDegree, gga.latMinutes, gga.latDirection,
+        gga.longDegree, gga.longMinutes, gga.longDirection)
+
+
+    @classmethod
+    def fromDMM(cls, latDegrees, latMinutes, latDirection, 
+    longDegrees, longMinutes, longDirection):
+        """
+        Creates an LLCoordinate object given latitude and longitude in
+        an alternate format (degrees, minutes, direction).
+        
+        :param latDegrees: The degrees of the latitude.
+        :param latMinutes: The minute degrees of the latitude.
+        :param latDirection: The direction of the latitude degrees.
+        :param longDegrees: The degrees of the longitude.
+        :param longMinutes: The minute degrees of the longitude.
+        :param longDirection: The direction of the longitude degrees.
+
+        :returns: An LL coordinate with the latitude and longitude in decimal form.
+
+        :raises: ValueError, when the direction/s is/are invalid.
+
+        Usage::
+            
+            sampleLL = LLCoordinate.fromDMS(12, 12, 12, 'N', 2, 2, 2,'W')
+            sampleUTM = sampleLL.convertToUTM()
+
+        """
+        # Raise an error if the direction is invalid.
+        if (latDirection != 'N' and latDirection !='S'):
+            raise ValueError('Latitude direction is not valid.', latDirection)
+        if (longDirection != 'E' and longDirection !='W'):
+            raise ValueError('Longitude direction is not valid.', longDirection)
+        
+        # Convert latitude degrees.
+        latDegrees += latMinutes/60.0 
+        if (latDirection == 'S'):
+            if (latDegrees > 0):
+                latDegrees *= -1
+        
+        # Convert longitude degrees.
+        longDegrees += longMinutes/60.0 
+        if (longDirection == 'W'):
+            if (longDegrees > 0):
+                longDegrees *= -1
+
+        return cls(latDegrees, longDegrees)
+
+    def getUTMCoordinate(self, referenceEllipsoid = referenceEllipsoids['WGS-84']):
+        """
+        Converts this LL coordinate into a UTM coordinate
+        with a reference ellipsoid. The WGS-84 ellipsoid is used as default.
+
+        :param referenceEllipsoid: The reference ellipsoid for the conversion.
+            The available reference ellipsoids in this module are:
+            * WGS-60
+            * WGS-66
+            * WGS-72
+            * WGS-84
+
+        :returns: The converted UTM coordinate.
+
+        Usage::
+
+            sampleLL = LLCoordinate(10, 10)
+            sampleUTM = sampleLL.getUTMCoordinate()
+        """
+
+        # An alternative longitude that is between -180.0 degrees to 179.9 degrees
+        longitudeAlt = (self.longitude + 180) - ((int(self.longitude + 180) / 360) * 360) - 180
+
+        # Get the necessary reference components.
+        eqRadius = referenceEllipsoid.radius
+        eccSquared = referenceEllipsoid.eccentricitySquared
+        k0 = 0.9996
+
+        # Get the UTM zone number.
+        zoneNumber = int((longitudeAlt + 180) / 6) + 1
+
+        if (self.latitude >= 56.0 and self.latitude < 64.0):
+            if (longitudeAlt >= 3.0 and longitudeAlt < 12.0):
+                zoneNumber = 32
+
+        if (self.latitude > 72.0 and self.latitude < 84.0):
+            if (longitudeAlt >= 0.0 and longitudeAlt < 9.0):
+                zoneNumber = 31
+            elif (longitudeAlt >= 9.0 and longitudeAlt < 21.0):
+                zoneNumber = 33
+            elif (longitudeAlt >= 21.0 and longitudeAlt < 33.0):
+                zoneNumber = 35
+            elif (longitudeAlt >= 33.0 and longitudeAlt < 42.0):
+                zoneNumber = 37
+        
+        # Get the origin of the longitude.
+        longitudeOrigin = (zoneNumber - 1) * 6 - 180 + 3
+
+        # Convert degrees to radians.
+        latRad = self.__convertDegreesToRadians(self.latitude)
+        longRad = self.__convertDegreesToRadians(longitudeAlt)
+        longOriginRad = self.__convertDegreesToRadians(longitudeOrigin)
+
+        eccPrimeSquared = eccSquared / ( 1 - eccSquared )
+
+        # Necessary calculations for northing and easting.
+        N = eqRadius / math.sqrt( 1 - eccSquared * math.sin(latRad) * math.sin(latRad))
+        T = math.tan(latRad) * math.tan(latRad)
+        C = eccPrimeSquared * math.cos(latRad) * math.cos(latRad)
+        A = math.cos(latRad) * (longRad - longOriginRad) 
+        
+        M = eqRadius * (
+            ( 1 - eccSquared/4 - 3*math.pow(eccSquared,2)/64 - 5*math.pow(eccSquared,3)/256 )*latRad - 
+            ( 3*eccSquared/8 + 3*math.pow(eccSquared,2)/32 + 45*math.pow(eccSquared,3)/1024 )*math.sin(2*latRad) +
+            ( 15*math.pow(eccSquared,2)/256 + 45*math.pow(eccSquared,3)/1024 )*math.sin(4*latRad) -
+            ( 35*math.pow(eccSquared,3)/3072 )*math.sin(6*latRad)
+            )
+
+        zone = str(zoneNumber) + self.__designateUTMLetter()
+
+        easting = k0*N*(A+(1-T+C)*math.pow(A,3)/6 +
+            (5-18*T+T*T+72*C-58*eccPrimeSquared)*math.pow(A,5)/120) + 500000.0
+
+        northing = k0*(M+N*math.tan(latRad)*(math.pow(A,2)/2+(5-T+9*C+4*C*C)*math.pow(A,4)/24 + 
+            (61-58*T+T*T+600*C-330*eccPrimeSquared)*math.pow(A,6)/720))
+
+        if (self.latitude < 0):
+            northing += 10000000.0
+
+        #print "easting: ", easting, ", northing: ", northing, ", zone: ", zone
+        return UTMCoordinate(easting, northing, zone)
+
+    def __designateUTMLetter(self):
+        """
+        Gets the designated UTM letter for this LLCoordinate's latitude.
+
+        :returns: The designated UTM letter.
+        """
+        # The Z is an error flag to check if the latitude is outside UTM limits.
+        designatedLetter = 'Z'
+
+        # Get the designated letter of the latitude.
+        if ((84 >= self.latitude) and (self.latitude >= 72)):
+            designatedLetter = 'X'
+        elif ((72 > self.latitude) and (self.latitude >= 64)):
+            designatedLetter = 'W'
+        elif ((64 > self.latitude) and (self.latitude >= 56)):
+            designatedLetter = 'V'
+        elif ((56 > self.latitude) and (self.latitude >= 48)):
+            designatedLetter = 'U'
+        elif ((48 > self.latitude) and (self.latitude >= 40)):
+            designatedLetter = 'T'
+        elif ((40 > self.latitude) and (self.latitude >= 32)):
+            designatedLetter = 'S'
+        elif ((32 > self.latitude) and (self.latitude >= 24)):
+            designatedLetter = 'R'
+        elif ((24 > self.latitude) and (self.latitude >= 16)):
+            designatedLetter = 'Q'
+        elif ((16 > self.latitude) and (self.latitude >= 8)):
+            designatedLetter = 'P'
+        elif ((8 > self.latitude) and (self.latitude >= 0)):
+            designatedLetter = 'N'
+        elif ((0 > self.latitude) and (self.latitude >= -8)):
+            designatedLetter = 'M'
+        elif ((-8 > self.latitude) and (self.latitude >= -16)):
+            designatedLetter = 'L'
+        elif ((-16 > self.latitude) and (self.latitude >= -24)):
+            designatedLetter = 'K'
+        elif ((-24 > self.latitude) and (self.latitude >= -32)):
+            designatedLetter = 'J'
+        elif ((-32 > self.latitude) and (self.latitude >= -40)):
+            designatedLetter = 'H'
+        elif ((-40 > self.latitude) and (self.latitude >= -48)):
+            designatedLetter = 'G'
+        elif ((-48 > self.latitude) and (self.latitude >= -56)):
+            designatedLetter = 'F'
+        elif ((-56 > self.latitude) and (self.latitude >= -64)):
+            designatedLetter = 'E'
+        elif ((-64 > self.latitude) and (self.latitude >= -72)):
+            designatedLetter = 'D'
+        elif ((-72 > self.latitude) and (self.latitude >= -80)):
+            designatedLetter = 'C'
+
+        return designatedLetter
+
+    def __convertDegreesToRadians(self, degrees):
+        """
+        Converts degrees to radians.
+
+        :param degrees: The angle in degrees to be converted.
+        :returns: The radians value of the given degree.
+        """
+        radians = degrees * ( math.pi / 180 )
+
+        return radians
+
+
+class UTMCoordinate(LLCoordinate):
+    """
+    Represents a UTM coordinate.
+
+    :param northing: The northing of the UTM.
+    :param easting: The easting of the UTM.
+    :param zone: The zone of the UTM.
+    """
+    def __init__(self, easting, northing, zone):
+        self.northing = northing
+        self.easting = easting
+        self.zone = zone
+        #print northing, " ", easting, " ", zone
+
+    def __str__(self):
+        return ('UTMCoordinate: (Zone:' + self.zone 
+            + ' Easting:' + str(self.easting) 
+            + ' Northing:' + str(self.northing) 
+            + ')')
+
+    #@classmethod
+    def fromGGASentence(self, cls, ggaSentence, referenceEllipsoid = referenceEllipsoids['WGS-84']):
+        """
+        Creates a UTM coordinate from a GGA sentence.
+
+        :param GGAsentence: The GGA sentence to be made into a UTM coordinate.
+        :param referenceEllipsoid: The reference ellipsoid for the conversion.
+            The available reference ellipsoids in this module are:
+            * WGS-60
+            * WGS-66
+            * WGS-72
+            * WGS-84
+        
+        :returns: The UTM coordinate.
+        """
+        llcoordinate = self.fromGGASentence(ggaSentence)
+        return llcoordinate.getUTMCoordinate(referenceEllipsoid)
+
+    @classmethod
+    def fromGGA(cls, gga, referenceEllipsoid = referenceEllipsoids['WGS-84']):
+        """
+        Creates a UTM coordinate from a GGA object.
+
+        :param gga: The GGA object to be made into an LL coordinate.
+        :param referenceEllipsoid: The reference ellipsoid for the conversion.
+            The available reference ellipsoids in this module are:
+            * WGS-60
+            * WGS-66
+            * WGS-72
+            * WGS-84
+        
+        :returns: The UTM coordinate.        
+        """
+        llcoordinate = LLCoordinate.fromGGA(gga)
+        return llcoordinate.getUTMCoordinate(referenceEllipsoid)
+
+    @classmethod
+    def fromLLCoordinate(cls, llcoordinate, refEllipsoid = referenceEllipsoids['WGS-84']):
+        """
+        Creates a UTM coordinate from LL coordinates.
+
+        :param llcoordinate: The LL coordinate to be made into a UTM coordinate.
+        :param referenceEllipsoid: The reference ellipsoid for the conversion.
+            The available reference ellipsoids in this module are:
+            * WGS-60
+            * WGS-66
+            * WGS-72
+            * WGS-84
+
+        :returns: The UTM coordinate.
+        """
+        return llcoordinate.getUTMCoordinate(refEllipsoid)  

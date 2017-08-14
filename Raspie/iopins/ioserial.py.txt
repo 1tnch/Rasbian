@@ -1,0 +1,188 @@
+import sys
+import time
+import difflib
+import pigpio
+import serial
+import os
+
+class SerialUART(object):
+    """
+    Handles UART serial communications.
+
+    :param port: Number of the port to connect to.
+    :param baudrate: Communication speed of the serial connection.
+    :param bytesize: Number of bits per word.
+    :param parity: The type of parity used in the communication.
+    :param stopbits: The stopbits used in the communication.
+    :param timeout: The length of time of timeout in the communication.
+
+    Usage::
+
+        sampleUART = SerialUART()
+        sampleUART.sendString('Hello World!')
+
+    """
+    def __init__(self, port = "/dev/ttyS0" , baudrate = 115200,
+    bytesize = 8, parity = 'N', stopbits = 1, timeout = 1):
+        self.ser = serial.Serial(port,
+        baudrate,
+        bytesize,
+        parity,
+        stopbits,
+        timeout)
+
+    def sendString(self, message):
+        """
+        Sends a string to UART.
+
+        :param message: The string to be sent to UART.
+        """
+        self.ser.write(message)
+
+    def readString(self, size):
+        """
+        Reads a string from UART.
+
+        :returns: The string received from UART.
+        """
+        response = self.ser.read(size)
+
+        return response
+
+    def sendByteArray(self, bytearr):
+        """
+        Sends a byte array to UART and gets the
+        corresponding response.
+
+        :param bytearray: The byte array to be sent to UART.
+        """
+        message = "".join(map(chr, bytearr))
+
+        self.sendString(message)
+
+    def readByteArray(self, size):
+        """
+        Reads byte arrays from UART.
+
+        :param size: The size of the array to be taken from the buffer.
+        :returns: The byte array received from UART.
+        """
+        response = self.ser.read(size)
+        
+        return bytearray(response)
+
+class SerialGPIO(object):
+    """
+    Handles GPIO serial communications.
+
+    :param RX: Number of the receiver pin.
+    :param TX: Number of the transmitter pin.
+    :param baudrate: Communication speed of the serial connection.
+    :param bytesize: Number of bits per word.
+
+    Usage::
+
+        sampleGPIO = SerialGPIO(12, 13)
+        sampleGPIO.sendString('Hello World!')
+
+    """
+
+    def __init__(self, RX, TX, baudrate=9600, bytesize=8):
+        self.pi = pigpio.pi()
+        self.RX = RX
+        self.TX = TX
+        self.pi.set_mode(RX, pigpio.INPUT)
+        self.pi.set_mode(TX, pigpio.OUTPUT)
+        self.baudrate = baudrate
+        self.bytesize = bytesize
+        
+    def sendString(self,message, delay=0):
+        """
+        Sends a string to GPIO.
+
+        :param message: The string to be sent to GPIO.
+        :param delay: The amount of milliseconds the application is paused after sending the screen.
+        """
+        self.pi.wave_add_new()
+        self.pi.wave_add_serial(self.TX, self.baudrate, message, self.bytesize)
+        wid = self.pi.wave_create()
+        self.pi.wave_send_once(wid)
+        self.pi.wave_delete(wid)
+        time.sleep(delay)
+
+    def openSerialGPIO(self):
+        """
+        Opens the serial in GPIO for reading data sent.
+        """
+        try:
+            self.pi.bb_serial_read_close(self.RX)
+        except:
+            pass
+
+        self.pi.bb_serial_read_open(self.RX, self.baudrate, self.bytesize)
+
+    def closeSerialGPIO(self):
+        self.pi.bb_serial_read_close(self.RX)        
+
+    def readString(self):
+        """
+        Reads a string from GPIO.
+        """
+        (count, data) = self.pi.bb_serial_read(self.RX)
+        if count:
+            ret=bytearray()
+            for i in range(count):
+                #print count, ",", i, "=>", hex(data[i])
+                ret.append(data[i])
+            return ret
+        else:
+            return ""
+        
+    def readSimpleString(self):
+        """
+        Return data collected from bit-bang directly.
+        """
+        return self.pi.bb_serial_read(self.RX)
+        
+    def sendByteArray(self,bytearr, delay):
+        """
+        Sends a byte array to GPIO and gets the
+        corresponding response.
+
+        :param bytearray: The byte array to be sent to GPIO.
+        """
+        message = "".join(map(chr, bytearr))
+
+        self.sendString(message)
+        time.sleep(delay)
+
+    def readByteArray(self):
+        """
+        Reads byte arrays from GPIO.
+
+        :returns: The byte array received from GPIO.
+        """
+        (count, data) = self.pi.bb_serial_read(self.RX)
+        if count:
+            return bytearray(data)
+        else:
+            return None
+        time.sleep(1.5)
+        
+        
+class RpiPIGPIOD(object):
+    """
+    PIGPIOD service.
+    """
+    
+    def startPIGPIOD(self):
+        """
+        Start PIGPIO service for translating GPIO as serial.
+        """
+        os.system("sudo pigpiod")
+        
+    def stopPIGPIOD(self):
+        """
+        Stop PIGPIO service.
+        """
+        os.system("sudo killall pigpiod")

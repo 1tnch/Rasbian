@@ -1,0 +1,594 @@
+from modules.gps import GPS
+from modules.accelerometer import Accelerometer
+from modules.bluetoothcomm import BluetoothCommunication
+from modules.gsm import GSM
+from modules.adc import MCP3008
+from database import sqlite
+
+import config
+import threading
+import time
+import datetime
+import copy
+
+
+class info(object):
+    """
+    Information collection of the mobile.
+    """
+
+    def __init__(self):
+        """
+        Initialise basic information of the equipment.
+        """
+        setattr(self, "equipment", config.EQUIPMENT_NAME)
+        setattr(self, "equipment_id", config.EQUIPMENT_ID)
+        setattr(self, "equipment_ser", self.get_SN().upper())
+        setattr(self, "equipment_type", config.EQUIPMENT_TYPE)
+    
+    def get_SN(self):
+        """
+        Get the serial number of the RPi.
+        Source: 
+        raspberrypi.stackexchange.com/questions/2086/how-do-i-get-the-serial-number
+        """
+        cpuserial=None    
+        try:
+            f=open('/proc/cpuinfo', 'r')
+            for line in f:
+                if line[0:6]=='Serial':
+                    cpuserial=line[10:26]
+            f.close()
+        except:
+            cpuserial=None
+        return cpuserial
+    
+                
+class Status(info):
+    """
+    Dynamic Status collection of the mobile. Inherits Info class for having the
+    equipment information.
+    """
+    def __init__(self):
+        # Inherit and trigger parent initialisation.
+        super(Status, self).__init__()
+    pass
+
+
+class Cycle(info):
+    """
+    Dynamic class for recording post-cycle / cycles.
+    """
+    def __init__(self):
+        super(Cycle, self).__init__()
+    
+    pass
+
+#===============================================================================
+# Dynamic variable for storing different status values.
+#===============================================================================
+status=None
+#===============================================================================
+# Dynamic variable for storing different cycle values.
+#===============================================================================
+cycle=None
+
+
+class Equipment(object):
+    """
+    Equipment class.
+    
+    Contains basic and generic variables and methods which defines a
+    basic mobile.
+    """
+
+    # Global variables and bound methods for GPS.
+    x_utm=None
+    y_utm=None
+    z_utm=None
+    lon=None
+    lat=None
+    hdop=None
+    nsv=None
+    # Global variables for speed and distance from GPS.
+    ground_speed=None
+    # Time difference between GPS current reception and last reception.
+    time_diff=None
+    
+    # Global variables and bound methods for Accelerometer.
+    x_accel=None
+    y_accel=None
+    z_accel=None
+    
+    # Bluetooth connection Status.
+    bt_is_connected=None
+    
+    # Collection of voltarges (index 0-7)
+    adc_voltages=None
+    
+    # Collection of statuses.
+    statuses=[]
+    
+    def __init__(self):
+        """
+        Equipment class initialisation.
+        """
+        global status
+        # First initialisation of global status.
+        status=Status()
+        
+        # Initialise data from GPS.
+        self.gps=GPS()
+        self.x_utm=self.gps.get_x_utm()
+        self.y_utm=self.gps.get_y_utm()
+        self.z_utm=self.gps.get_z_utm()
+        self.lon=self.gps.get_longitude()
+        self.lat=self.gps.get_latitude()
+        self.hdop=self.gps.get_hdop()
+        self.nsv=self.gps.get_nsv()
+        self.ground_speed=self.gps.get_ground_speed()
+        self.time_diff=self.gps.get_gps_time_diff()
+        
+        # Initialise accelerometer.
+        self.accel=Accelerometer()
+        self.x_accel=self.accel.get_x_accel()
+        self.y_accel=self.accel.get_y_accel()
+        self.z_accel=self.accel.get_z_accel()
+        
+        # Initialise bluetooth.
+        self.bt=BluetoothCommunication()
+        self.bt_is_connected=self.bt.get_connection_status()
+        
+        # Initialise ADC.
+        self.adc=MCP3008()
+        self.adc_voltages=self.adc.get_voltages()
+        
+        # Initialise database.
+        self.db=sqlite.Database()
+      
+        # Initialise GSM and run as thread.
+        self.gsm=GSM()
+        while True:
+            self.gsm.checkGSM()
+            time.sleep(0.1)
+        thread_gsm=threading.Thread(target=self.manage2G, args=())
+        thread_gsm.start()
+        
+        # Start threading for updating the status.
+        thread_update_status=threading.Thread(target=self.doUpdateStatus)
+        thread_update_status.start()
+        
+        print("Equipment initialised.")
+        
+        
+    def doUpdateStatus(self):
+        """
+        Separate function for threading indefinite status update, since the 
+        updateStatus will be overridden and modified depending on the class.
+        """
+        global status
+        while True:
+            self.updateStatus()
+            #print(status.__dict__.keys())
+            
+            #start_time=datetime.datetime.now()
+            to_append=copy.copy(status)
+            #print("Copy duration="+str((datetime.datetime.now()-start_time).total_seconds()))
+            
+            # Collect status data.
+            self.statuses.append(to_append)
+            # 
+            #if len(self.statuses)>=10:
+            self.saveToDB()
+            
+            #===================================================================
+            # w=str(getattr(status, "weight")) if hasattr(status, "weight") else "None"
+            # ltf=str(getattr(status, "lt_f_pressure")) if hasattr(status, "lt_f_pressure") else "None"
+            # ltr=str(getattr(status, "lt_r_pressure")) if hasattr(status, "lt_r_pressure") else "None"
+            # rtf=str(getattr(status, "rt_f_pressure")) if hasattr(status, "rt_f_pressure") else "None"
+            # rtr=str(getattr(status, "rt_r_pressure")) if hasattr(status, "rt_r_pressure") else "None"
+            # print( w+" "+ltf+" "+ltr+" "+rtf+" "+rtr )
+            #===================================================================
+
+            time.sleep(1)
+        
+    def updateStatus(self):
+        """
+        Updates the Status of the mobile.
+        """
+        global Status
+        
+        setattr(status, "datetime", datetime.datetime.utcnow().replace(microsecond=0).isoformat())
+        setattr(status, "x_utm", self.x_utm())
+        setattr(status, "y_utm", self.y_utm())
+        setattr(status, "z_utm", self.z_utm())
+        setattr(status, "latitude", self.lat())
+        setattr(status, "longitude", self.lon())
+        setattr(status, "x_accel", self.x_accel())
+        setattr(status, "y_accel", self.y_accel())
+        setattr(status, "z_accel", self.z_accel())
+        setattr(status, "ground_speed", self.ground_speed())
+        setattr(status, "hdop", self.hdop())
+        setattr(status, "nsv", self.nsv())
+            
+        # Append Status.
+        #self.statuses.append(status)
+
+    def clearStatus(self):
+        """
+        Renew status cache.
+        """
+        global status
+        status=Status()
+        
+        
+    def saveToDB(self):
+        """
+        Save the statuses data to the database.
+        """
+        if len(self.statuses)>=10:
+            #start_time=datetime.datetime.now()
+            self.db.insertDataMany("STATUS", self.statuses)
+            self.statuses=[]
+            #print("Save duration="+str((datetime.datetime.now()-start_time).total_seconds()))
+    
+        
+    def saveCycle(self):
+        """
+        Record cycle to database.
+        """
+        cycles=[]
+        cycles.append( copy.copy(cycle) )
+        self.db.insertDataMany("cycle", cycles)
+    
+    
+    def manage2G(self):
+        """
+        Manage the 2G connection. This includes connect, reconnect, data sending, etc.
+        """
+        print("Manage 2G called")
+        if not config.GSM_INTERFACE:
+            print("No GSM interface configured...")
+            return
+        print("Connecting to Internet")
+        # Connect to the internet.
+        self.gsm.connectToInternet()
+        print("Connected?")
+        
+        while True:
+            print("Sending")
+            # Send data to the server.
+            self.gsm.httpSend(copy.copy(status))
+            time.sleep(0)
+            
+    
+    def manageAssoServer(self):
+        """
+        Manage the sending of data via bluetooth. Once the data is sent,
+        the bluetooth socket will be closed.
+        """
+        #print("manageAssoServer")
+        while True:
+            if self.bt_is_connected():
+                # After both mobile are connected, the client must ready
+                # to receive. The small delay is to give time for the client
+                # to prepare for receiving data.
+                time.sleep(2)
+                self.bt.sendBluetoothData( str(info().__dict__) )
+                # Close socket after sending data.
+                #self.bt.closeSocket()
+            time.sleep(1)
+                
+            
+    def manageAssoClient(self):
+        """
+        Manage the receiving of data via bluetooth. Once the data is received,
+        the bluetooth socket will be closed.
+        """
+        global status
+        #print("manageAssoClient")
+        while True:
+            if self.bt_is_connected():
+                data=self.bt.receiveBluetoothData()
+                #print("Received data: "+str(data))
+                # Translating the values and assign to status.
+                if data:
+                    arr_data=data.replace('{', '').replace('}', '').split(',')
+                    for d in arr_data:
+                        arr_d=d.strip().split(":")
+                        if len(arr_d)==2:
+                            field=arr_d[0].replace('\'', '')
+                            arr_d[1]=arr_d[1].strip()
+                            if arr_d[1].startswith('\'') and arr_d[1].endswith('\''):
+                                setattr(status, field, str(arr_d[1].strip().replace('\'','')))
+                            else:
+                                setattr(status, field, arr_d[1].strip())
+                    print(status.__dict__)
+                    # Close socket after receiving data.
+                    #self.bt.closeSocket()
+                    time.sleep(1)
+                    """ TODO: Enable second association registration. """
+            time.sleep(0)
+            
+        
+class Truck(Equipment):
+    """
+    Truck class. Inherited from Equipment.
+    
+    Contains variables and methods essential for Trucks.
+    """
+    
+    # State of the truck (TRAVEL_EMPTY, TRAVEL_LOADED,
+    # STOP_EMPTY, STOP_LOADED).
+    state=None
+    # Duration when truck is travelling while empty.
+    travel_empty_time=None
+    # Duration when truck is travelling while loaded.
+    travel_loaded_time=None
+    # Duration when truck is stopped while empty.
+    stop_empty_time=None
+    # Duration when truck is stopped while loaded.
+    stop_loaded_time=None
+    # Duration when truck is loading.
+    loading_time=None
+    # Duration when truck is dumping.
+    dumping_time=None
+    # Distance in meters when truck is travelling while empty.
+    travel_empty_distance=None
+    # Distance in meters when truck is travelling while loaded.
+    travel_loaded_distance=None
+    # Current truck load.
+    weight=None
+    
+    # Dump bed sensor (in volts).
+    dump_bed=None
+    
+    def __init__(self):
+        # Inherit and trigger parent initialisation.
+        super(Truck, self).__init__()
+        
+        # For trucks, they will server as clients for the association.
+        # The bluetooth will start as client.
+        #bt_client=threading.Thread(target=self.bt.connectNearbyBluetoothDevice, args=())
+        #bt_client.start()
+        #print("Bluetooth client started...")
+        
+        global cycle
+        cycle=Cycle()
+        
+        #=======================================================================
+        # Payload interface initialization.
+        #=======================================================================
+        payload_interface=config.PAYLOAD_INTERFACE.lower() if config.PAYLOAD_INTERFACE else None
+        
+        if payload_interface:
+            # Initialize VIMS weight interface.
+            if payload_interface=="vims" or payload_interface=="vims3g":
+                
+                from payload import vims
+                
+                if payload_interface=="vims":
+                    vims.VIMS(status, cycle)
+                elif payload_interface=="vims3g":
+                    vims.VIMS3G(status, cycle)
+            
+        
+        # Thread for reading data from the association.
+        bt_asso_client=threading.Thread(target=self.manageAssoClient, args=())
+        bt_asso_client.start()
+        #print("Association client started...")
+        
+        print ("Truck initialised.")
+    
+    
+    def analyseState(self):
+        # Determine if the truck is stopped based on it's speed.
+        """
+        is_stopped=True if not self.ground_speed() \
+            or self.ground_speed<5.0 \
+            else False
+        """
+    
+        if self.ground_speed()<5.0:
+            is_stopped = True
+        else:
+            is_stopped=False
+        """  
+        if not self.finish_loading:
+            self.weight=0
+        # Nominal tonnage after loading.
+        elif self.finish_loading and not self.state=="LOADING":
+            self.weight = config.TRUCK_NOMINAL_TONNAGE 
+        """
+        # Determine if the dump bed is raised. Note that voltage is outputed
+        # when the dump bed is lowered.
+        is_raised=True if self.dump_bed \
+            and self.dump_bed>1 \
+            else False
+        # Display values.
+        #print('bluetooth '+str(self.bt_is_connected()))
+        #print('GROUND SPEED= '+str(self.ground_speed()))
+        #print("is raised? "+str(is_raised))
+        #print("is stop?"+str(is_stopped))
+        # Assume dumping state when dump bed sensor is raised.
+        if is_raised:
+            self.state="dumping"
+            #self.finish_loading=False
+            
+            # TODO: Generate cycle.
+               
+        else:
+            # Cases for stop status.
+            
+            if is_stopped:
+                if  self.state \
+                    and self.bt_is_connected() \
+                    and (self.state=="stop_empty" \
+                         or self.state=="travel_empty" \
+                         or self.state=="loading"):
+                        #print(str(is_stopped))
+                        #print('CONNECTED')
+                        self.state="loading"
+                        #self.finish_loading=True
+        
+                    
+                elif self.state \
+                    and (self.state=="dumping" \
+                         or self.state=="stop_empty" \
+                         or self.state=="travel_empty") \
+                    and not self.bt_is_connected():
+                        
+                        # Assume 0 tonnage in average mode when empty.
+                        if config.PAYLOAD_INTERFACE==None:
+                            self.weight=0
+                        
+                        self.state="stop_empty"
+                               
+                elif self.state \
+                     and (self.state=="loading" \
+                          or self.state=="stop_loaded" \
+                          or self.state=="travel_loaded") \
+                     and not self.bt_is_connected():
+                    
+                        # Assume nominal tonnage on average mode.
+                        if config.PAYLOAD_INTERFACE==None:
+                            self.weight=config.TRUCK_NOMINAL_TONNAGE
+                    
+                        self.state="stop_loaded"
+                        
+                else:
+                    self.state="stop_empty"
+            
+            # Cases for travelling status.
+            else:
+                if self.state \
+                    and (self.state=="loading" \
+                        or self.state=="travel_loaded" \
+                        or self.state=="stop_loaded") \
+                    and not self.bt_is_connected():
+                    
+                        # Assume nominal tonnage on average mode.
+                        if config.PAYLOAD_INTERFACE==None:
+                            self.weight=config.TRUCK_NOMINAL_TONNAGE
+                        
+                        self.state="travel_loaded"
+                        
+                        
+                elif self.state \
+                    and (self.state=="dumping" \
+                         or self.state=="travel_empty" \
+                         or self.state=="stop_empty") \
+                    and not self.bt_is_connected():
+                        
+                        # Assume 0 tonnage in average mode when empty.
+                        if config.PAYLOAD_INTERFACE==None:
+                            self.weight=0
+                        
+                        self.state="travel_empty"
+                """
+                else:
+                   self.state="travel_empty"
+                """    
+        
+    def updateStatus(self):
+        # Super updateStatus function.
+        Equipment.updateStatus(self)
+        
+        global status
+        
+        # Update dump bed sensor voltage value.
+        self.dump_bed=self.adc_voltages()[config.DUMP_SENSOR_INDEX] if self.adc_voltages() else None
+        # Update the state.
+        self.analyseState()
+        # Distrance travelled
+        dist=(self.time_diff()* \
+              (self.ground_speed()*10/36)) \
+              if self.time_diff() and self.ground_speed() \
+              else 0
+        # Time difference.
+        time_diff=self.time_diff()
+        
+        # Cumulate the time and distances based on their states.
+        if self.state=="stop_empty":
+            self.stop_empty_time=(self.stop_empty_time+time_diff) \
+            if self.stop_empty_time else time_diff
+        elif self.state=="travel_empty":
+            self.travel_empty_time=(self.travel_empty_time+time_diff) \
+            if self.travel_empty_time else time_diff
+            self.travel_empty_distance=(self.travel_empty_distance+dist) \
+            if self.travel_empty_distance else dist
+        elif self.state=="stop_loaded":
+            self.stop_loaded_time=(self.stop_loaded_time+time_diff) \
+            if self.stop_loaded_time else time_diff
+        elif self.state=="travel_loaded":
+            self.travel_loaded_time=(self.travel_loaded_time+time_diff) \
+            if self.travel_loaded_time else time_diff
+            self.travel_loaded_distance=(self.travel_loaded_distance+dist) \
+            if self.travel_loaded_distance else time_diff
+        elif self.state=="loading":
+            self.loading_time=(self.loading_time+time_diff) \
+            if self.loading_time else time_diff 
+        elif self.state=="dumping":
+            self.dumping_time=(self.dumping_time+time_diff) \
+            if self.dumping_time else time_diff
+        
+        setattr(status, "state", self.state)
+        setattr(status, "stop_empty_time", self.stop_empty_time)
+        setattr(status, "stop_loaded_time", self.stop_loaded_time)
+        setattr(status, "travel_empty_time", self.travel_empty_time)
+        setattr(status, "travel_empty_distance", self.travel_empty_distance)
+        setattr(status, "travel_loaded_time", self.travel_loaded_time)
+        setattr(status, "travel_loaded_distance", self.travel_loaded_distance)
+        setattr(status, "dumping_time", self.dumping_time)
+        # Use nominal tonnage when no payload interface set. Otherwise, use
+        # payload interface tonnage instead.
+        if not config.PAYLOAD_INTERFACE:
+            setattr(status, "weight", self.weight)
+        
+                
+class Loader(Equipment):
+    """
+    Loader class. Inherited from Equipment.
+    
+    Contains variables and methods essential for Loaders.
+    """
+    
+    def __init__(self):
+        """
+        Loader class initialisation.
+        """
+        # Inherit and trigger parent initialisation.
+        super(Loader, self).__init__()
+        
+        # For loaders, they will act as servers for the association.
+        # Start the bluetooth as server.
+        bt_server=threading.Thread(target=self.bt.createBluetoothServer, args=())
+        bt_server.start()
+        
+        # Thread for sending data from the association.
+        bt_asso_server=threading.Thread(target=self.manageAssoServer(), args=())
+        bt_asso_server.start()
+        
+        print("Loader initialised")
+        
+e=None
+
+if config.EQUIPMENT_TYPE:
+    if config.EQUIPMENT_TYPE.upper()=="TRUCK":
+        e=Truck()
+    elif config.EQUIPMENT_TYPE.upper()=="LOADER":
+        e=Loader()
+else:
+    e=Equipment()
+    
+#e.manageAssociation()
+
+"""
+while True:
+    t.updateStatus()
+    t.saveToDB()
+    time.sleep(0.5)
+""" 
+
+    
+        
